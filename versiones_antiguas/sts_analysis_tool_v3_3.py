@@ -3,6 +3,11 @@
 """
 STS Analysis Tool v3.3 (BCM Z - Acc Phases - 3 Phases per rep)
 
+This legacy script has been retrofitted with configuration and logging support
+compatible with the newer `enhanced_v2` tool. You can provide a YAML config
+file via `--config` and override parameters with CLI options. Outputs are
+logged using the centralized logging infrastructure (`src/logger.py`).
+
 Highlights vs v3.2:
 - Batch mode: --batch data/input  (process all .xlsx inside; recursive off by default)
 - Output directory: --out data/output  (created if missing)
@@ -22,6 +27,11 @@ import os
 import json
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
+
+from src.config import load_config, get_config
+from src.logger import LoggerManager, get_logger
+
+logger = get_logger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -73,7 +83,7 @@ class PhaseComputer:
             i0, i1 = i1, i0
         return slice(i0, i1+1)
 
-    def range_mm_to_m(self, col: str, t0: float, t1: float):
+    def range_mm_to_m(self, col: str, t0: float, t1: float) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         if col not in self.cols:
             return (None,None,None)
         sl = self._slice(t0, t1)
@@ -84,7 +94,7 @@ class PhaseComputer:
         mn = float(np.nanmin(vals))/1000.0
         return (mx, mn, mx-mn)
 
-    def range_deg(self, col: str, t0: float, t1: float):
+    def range_deg(self, col: str, t0: float, t1: float) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         if col not in self.cols:
             return (None,None,None)
         sl = self._slice(t0, t1)
@@ -95,7 +105,7 @@ class PhaseComputer:
         mn = float(np.nanmin(vals))
         return (mx, mn, mx-mn)
 
-    def stats(self, col: Optional[str], arr_fallback: Optional[np.ndarray], t0: float, t1: float):
+    def stats(self, col: Optional[str], arr_fallback: Optional[np.ndarray], t0: float, t1: float) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         sl = self._slice(t0, t1)
         if col and (col in self.cols):
             vals = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -107,7 +117,7 @@ class PhaseComputer:
             return (None,None,None)
         return (float(np.nanmean(vals)), float(np.nanmax(vals)), float(np.nanmin(vals)))
 
-    def power_work(self, power_col: Optional[str], vel_col: Optional[str], mass_kg: Optional[float], t0: float, t1: float):
+    def power_work(self, power_col: Optional[str], vel_col: Optional[str], mass_kg: Optional[float], t0: float, t1: float) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         sl = self._slice(t0, t1)
         if power_col and (power_col in self.cols):
             p = pd.to_numeric(self.df[power_col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -125,7 +135,7 @@ class PhaseComputer:
         work = trapz_manual(p[np.isfinite(p)], self.dt)
         return (mean_p, max_p, work)
 
-    def mean(self, col: str, t0: float, t1: float):
+    def mean(self, col: str, t0: float, t1: float) -> Optional[float]:
         if col not in self.cols:
             return None
         sl = self._slice(t0, t1)
@@ -134,7 +144,7 @@ class PhaseComputer:
             return None
         return float(np.nanmean(vals))
 
-    def stdev(self, col: str, t0: float, t1: float):
+    def stdev(self, col: str, t0: float, t1: float) -> Optional[float]:
         if col not in self.cols:
             return None
         sl = self._slice(t0, t1)
@@ -144,7 +154,7 @@ class PhaseComputer:
             return None
         return float(np.nanstd(vals, ddof=1))
 
-    def time_to_max(self, col: str, t0: float, t1: float):
+    def time_to_max(self, col: str, t0: float, t1: float) -> Tuple[Optional[float], Optional[float]]:
         if col not in self.cols:
             return (None, None)
         sl = self._slice(t0, t1)
@@ -171,7 +181,8 @@ def analyze_file(
     out_dir: str,
     csv_export: bool,
     close_last_seated_at_end: bool = True,
-):
+) -> Tuple[str, str, str, Optional[str]]:
+    logger.info(f"Iniciando análisis: {input_path}")
     # salida y prefijos
     os.makedirs(out_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(input_path))[0]
@@ -513,7 +524,7 @@ def analyze_file(
 
 # ---------------- batch driver ----------------
 
-def process_batch(batch_dir: str, out_dir: str, **kwargs):
+def process_batch(batch_dir: str, out_dir: str, **kwargs) -> List[Tuple[str, Tuple[str, str, str, Optional[str]]]]:
     os.makedirs(out_dir, exist_ok=True)
     entries = sorted([f for f in os.listdir(batch_dir) if f.lower().endswith('.xlsx')])
     results = []
@@ -535,11 +546,16 @@ def process_batch(batch_dir: str, out_dir: str, **kwargs):
         print(f"Processing: {name}")
         out = analyze_file(in_path, out_dir=out_dir, **kwargs)
         results.append((name, out))
+    logger.info(f"Batch completo: procesados {len(results)} archivos")
     return results
 
 # ---------------- main ----------------
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='STS v3.3: Acc Phases + Hoja3 ampliada + batch + CSV')
+    ap.add_argument('--config', help='Archivo YAML de configuración')
+    ap.add_argument('--show-config', action='store_true', help='Mostrar configuración y salir')
+    ap.add_argument('--log-level', help='Nivel de logging (DEBUG/INFO/WARNING/ERROR/CRITICAL)')
+    ap.add_argument('--log-dir', help='Directorio de logs (anula config)')
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--input', help='Ruta a un archivo .xlsx')
     g.add_argument('--batch', help='Carpeta con .xlsx a procesar')
@@ -555,39 +571,60 @@ if __name__ == '__main__':
     ap.add_argument('--overwrite', action='store_true', help='Reprocesar aunque ya exista el Excel de salida')
     args = ap.parse_args()
 
+    # load configuration and logging
+    config = load_config(args.config)
+    if args.log_level:
+        config.set('logging.level', args.log_level)
+    log_dir = args.log_dir or config.get('log_directory')
+    LoggerManager.configure(log_dir=log_dir)
+
+    if args.show_config:
+        print(json.dumps(config.to_dict(), indent=2))
+        exit(0)
+
+    # determine effective parameters (CLI overrides config)
+    sheet = args.sheet or config.get('sheet_name', 'Reducido')
+    timecol = args.time_col or config.get('time_col', 'time')
+    mass = args.mass_kg if args.mass_kg is not None else config.get('mass_kg')
+    window = args.window or config.get('window', 30)
+    npos = args.n_positive or config.get('n_positive', 30)
+    vth = args.vel_th or config.get('vel_th_m_s', 0.1)
+    halfw = args.half_window_derivative or config.get('half_window_derivative', 3)
+
     if args.input:
         # single file
         out = analyze_file(
             input_path=args.input,
-            sheet_name=args.sheet,
-            time_col=args.time_col,
-            mass_kg=args.mass_kg,
-            window=args.window,
-            n_positive=args.n_positive,
-            vel_th_m_s=args.vel_th,
-            half_window_derivative=args.half_window_derivative,
+            sheet_name=sheet,
+            time_col=timecol,
+            mass_kg=mass,
+            window=window,
+            n_positive=npos,
+            vel_th_m_s=vth,
+            half_window_derivative=halfw,
             out_dir=args.out,
             csv_export=args.csv,
         )
-        print('\nLISTO (archivo único)')
-        print('Excel :', out[0])
-        print('Grafico:', out[1])
-        print('Params:', out[2])
-        if args.csv: print('CSV   :', out[3])
+        logger.info('LISTO (archivo único)')
+        logger.info(f'Excel : {out[0]}')
+        logger.info(f'Grafico: {out[1]}')
+        logger.info(f'Params: {out[2]}')
+        if args.csv:
+            logger.info(f'CSV   : {out[3]}')
     else:
         # batch
         res = process_batch(
             batch_dir=args.batch,
             out_dir=args.out,
-            sheet_name=args.sheet,
-            time_col=args.time_col,
-            mass_kg=args.mass_kg,
-            window=args.window,
-            n_positive=args.n_positive,
-            vel_th_m_s=args.vel_th,
-            half_window_derivative=args.half_window_derivative,
+            sheet_name=sheet,
+            time_col=timecol,
+            mass_kg=mass,
+            window=window,
+            n_positive=npos,
+            vel_th_m_s=vth,
+            half_window_derivative=halfw,
             csv_export=args.csv,
             overwrite=args.overwrite,
         )
-        print('\nLISTO (batch)')
-        print(f'Procesados: {len(res)}')
+        logger.info('LISTO (batch)')
+        logger.info(f'Procesados: {len(res)}')
