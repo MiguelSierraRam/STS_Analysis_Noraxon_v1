@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Herramienta de análisis STS (Sit-to-Stand) - Versión Enhanced v2.0
+Herramienta de análisis STS (Sit-to-Stand) - Versión Enhanced v2.1
 
 Features:
 - Detección exacta de fases estilo Excel
@@ -12,20 +12,26 @@ Features:
 - Metadatos Noraxon (código, altura, peso, etc.)
 - Hoja3 ampliada (Kinematic & Forces like)
 - Batch processing + CSV export
+- Logging centralizado profesional
+- Configuración vía config.yaml
 
-Requiere: numpy, pandas, matplotlib, openpyxl
+Requiere: numpy, pandas, matplotlib, openpyxl, pyyaml
 
 Modo individual:
     python sts_analysis_tool_enhanced_v2.py --input data/input/file.xlsx --mass-kg 75
 
 Modo batch:
     python sts_analysis_tool_enhanced_v2.py --batch data/input --out data/output --mass-kg 75 --csv
+
+Con configuración custom:
+    python sts_analysis_tool_enhanced_v2.py --config custom_config.yaml --input file.xlsx
 """
 
 import argparse
 import os
 import json
 from typing import Optional, Tuple, List
+import logging
 
 import numpy as np
 import pandas as pd
@@ -46,12 +52,17 @@ from src.plotting import generate_plots
 from src.export import create_sheet1_variables, export_to_excel, export_to_json, export_advanced_sheet3
 from src.advanced_metrics import PhaseComputer, detect_emg_columns, detect_cop_columns
 from src.metadata import read_metadata
+from src.config import load_config, get_config
+from src.logger import LoggerManager, get_logger
 
 # Importar para Excel
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
+
+# Inicializar logger
+logger = get_logger(__name__)
 
 
 def run_tool_enhanced(
@@ -73,7 +84,11 @@ def run_tool_enhanced(
     close_last_seated_at_end: bool = True,
 ) -> Tuple[str, Optional[str], str, Optional[str]]:
     """Ejecuta análisis STS completo con funcionalidades avanzadas."""
+    logger.info(f"Iniciando análisis: {file_path}")
+    logger.debug(f"  Hoja: {sheet_name}, Tiempo col: {time_col}")
+    
     # -------- 1. LEER DATOS --------
+    logger.debug("Leyendo datos de Excel...")
     df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')
     if time_col not in df.columns:
         raise ValueError(f'No se encontró columna "{time_col}".')
@@ -81,6 +96,8 @@ def run_tool_enhanced(
     t = df[time_col].astype(float).to_numpy()
     if len(t) < 3:
         raise ValueError('No hay suficientes muestras.')
+    
+    logger.debug(f"Datos cargados: {len(t)} muestras")
     
     dt = float(pd.Series(np.diff(t)).median())
     n = len(t)
@@ -329,8 +346,16 @@ def run_tool_enhanced(
         try:
             out_csv = out_prefix + '_hoja3.csv'
             hoja3_df.to_csv(out_csv, index=False)
+            logger.debug(f"CSV exportado: {out_csv}")
         except Exception as e:
-            print(f"Warning: CSV failed: {e}")
+            logger.warning(f"No se pudo exportar CSV: {e}")
+    
+    logger.info(f"✓ Análisis completado correctamente")
+    logger.debug(f"  Excel: {out_excel}")
+    logger.debug(f"  Plot: {plot_path}")
+    logger.debug(f"  JSON: {out_json}")
+    if out_csv:
+        logger.debug(f"  CSV: {out_csv}")
     
     return out_excel, plot_path, out_json, out_csv
 
@@ -374,12 +399,12 @@ def process_batch(
                 in_mtime = os.path.getmtime(in_path)
                 out_mtime = os.path.getmtime(out_xlsx)
                 if out_mtime >= in_mtime:
-                    print(f"SKIP (up-to-date): {name}")
+                    logger.info(f"SKIP (up-to-date): {name}")
                     continue
             except Exception:
                 pass
         
-        print(f"Processing: {name}")
+        logger.info(f"Processing: {name}")
         try:
             out = run_tool_enhanced(
                 file_path=in_path,
@@ -388,33 +413,55 @@ def process_batch(
             )
             results.append((name, out))
         except Exception as e:
-            print(f"  ERROR: {e}")
+            logger.error(f"ERROR procesando {name}: {e}", exc_info=True)
             results.append((name, (None, None, None, None)))
     
     return results
 
 
 def main():
-    """Interfaz principal con soporte batch."""
+    """Interfaz principal con soporte batch, logging y configuración."""
     parser = argparse.ArgumentParser(
-        description='STS Enhanced v2.0: Hip Z + EMG + CoP_SD + Batch + CSV'
+        description='STS Enhanced v2.1: Hip Z + EMG + CoP_SD + Batch + CSV + Logging + Config',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ejemplos:
+  # Archivo individual con config por defecto
+  python sts_analysis_tool_enhanced_v2.py --input data/input/file.xlsx --mass-kg 75
+  
+  # Batch processing
+  python sts_analysis_tool_enhanced_v2.py --batch data/input --out data/output --mass-kg 75 --csv
+  
+  # Con configuración custom
+  python sts_analysis_tool_enhanced_v2.py --config custom.yaml --input file.xlsx
+  
+  # Ver configuración por defecto
+  python sts_analysis_tool_enhanced_v2.py --show-config
+        """
     )
     
+    # Configuración y logging
+    parser.add_argument('--config', default=None, help='Archivo config.yaml custom (default: config.yaml)')
+    parser.add_argument('--show-config', action='store_true', help='Mostrar configuración y salir')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
+                        default='INFO', help='Nivel de logging')
+    parser.add_argument('--log-dir', default=None, help='Directorio custom para logs')
+    
     # --input XOR --batch
-    g = parser.add_mutually_exclusive_group(required=True)
+    g = parser.add_mutually_exclusive_group(required=False)
     g.add_argument('--input', help='Archivo .xlsx individual')
     g.add_argument('--batch', help='Carpeta con .xlsx')
     
-    # Parámetros comunes
-    parser.add_argument('--out', default='data/output', help='Directorio de salida')
-    parser.add_argument('--sheet', default='Reducido', help='Hoja a procesar')
-    parser.add_argument('--time-col', default='time', help='Columna de tiempo')
+    # Parámetros comunes (con defaults de config.yaml)
+    parser.add_argument('--out', default=None, help='Directorio de salida')
+    parser.add_argument('--sheet', default=None, help='Hoja a procesar')
+    parser.add_argument('--time-col', default=None, help='Columna de tiempo')
     parser.add_argument('--disp-col', default=None, help='Columna BCM Z')
     parser.add_argument('--mass-kg', type=float, default=None, help='Masa (kg)')
-    parser.add_argument('--window', type=int, default=30, help='Ventana detección')
-    parser.add_argument('--n-positive', type=int, default=30, help='N celdas positivas')
-    parser.add_argument('--vel-th', type=float, default=0.1, help='Umbral vel (m/s)')
-    parser.add_argument('--ok-th', type=float, default=0.85, help='Umbral amplitud')
+    parser.add_argument('--window', type=int, default=None, help='Ventana detección')
+    parser.add_argument('--n-positive', type=int, default=None, help='N celdas positivas')
+    parser.add_argument('--vel-th', type=float, default=None, help='Umbral vel (m/s)')
+    parser.add_argument('--ok-th', type=float, default=None, help='Umbral amplitud')
     parser.add_argument('--csv', action='store_true', help='Exportar Hoja3 a CSV')
     parser.add_argument('--no-plot', action='store_true', help='Sin gráfico general')
     parser.add_argument('--no-per-rep', action='store_true', help='Sin gráficos por rep')
@@ -422,48 +469,107 @@ def main():
     
     args = parser.parse_args()
     
+    # ========== CARGAR CONFIGURACIÓN ==========
+    # Cargar config.yaml
+    config = load_config(args.config)
+    
+    # Configurar logging
+    LoggerManager.configure(log_dir=args.log_dir)
+    logger.info(f"STS Analysis Tool Enhanced v2.1 iniciado")
+    logger.debug(f"Archivo config: {args.config or 'config.yaml (default)'}")
+    
+    # Mostrar configuración si se solicita
+    if args.show_config:
+        print("\n" + "=" * 70)
+        print("CONFIGURACIÓN ACTUAL")
+        print("=" * 70)
+        import yaml
+        print(yaml.dump(config.to_dict(), default_flow_style=False, allow_unicode=True))
+        return
+    
+    # ========== VALIDACIONES ==========
+    if not args.input and not args.batch:
+        parser.error("Se requiere --input o --batch")
+    
+    # ========== USAR DEFAULTS DE CONFIG.YAML PARA VALORES NO ESPECIFICADOS ==========
+    sheet_name = args.sheet or config.get('sheet_name', 'Reducido')
+    time_col = args.time_col or config.get('time_col', 'time')
+    disp_col = args.disp_col or config.get('disp_col', None)
+    out_dir = args.out or config.get('output_directory', 'data/output')
+    window = args.window or config.get('window', 30)
+    n_positive = args.n_positive or config.get('n_positive', 30)
+    vel_th_m_s = args.vel_th or config.get('vel_th_m_s', 0.1)
+    ok_th = args.ok_th or config.get('ok_th', 0.85)
+    mass_kg = args.mass_kg or config.get('mass_kg', None)
+    csv_export = args.csv or config.get('csv_export', False)
+    make_plot = not args.no_plot and config.get('make_plot', True)
+    per_rep_plots = not args.no_per_rep and config.get('per_rep_plots', True)
+    
     kwargs = {
-        'sheet_name': args.sheet,
-        'time_col': args.time_col,
-        'disp_col': args.disp_col,
-        'mass_kg': args.mass_kg,
-        'window': args.window,
-        'n_positive': args.n_positive,
-        'vel_th_m_s': args.vel_th,
-        'ok_th': args.ok_th,
-        'csv_export': args.csv,
-        'make_plot': (not args.no_plot),
-        'per_rep_plots': (not args.no_per_rep),
+        'sheet_name': sheet_name,
+        'time_col': time_col,
+        'disp_col': disp_col,
+        'mass_kg': mass_kg,
+        'window': window,
+        'n_positive': n_positive,
+        'vel_th_m_s': vel_th_m_s,
+        'ok_th': ok_th,
+        'csv_export': csv_export,
+        'make_plot': make_plot,
+        'per_rep_plots': per_rep_plots,
     }
     
+    logger.info(f"Parámetros de análisis:")
+    logger.info(f"  - window: {window}")
+    logger.info(f"  - n_positive: {n_positive}")
+    logger.info(f"  - vel_th_m_s: {vel_th_m_s}")
+    logger.info(f"  - ok_th: {ok_th}")
+    logger.info(f"  - mass_kg: {mass_kg}")
+    
+    # ========== PROCESAMIENTO ==========
     if args.input:
-        print(f"\nProcessing: {args.input}")
+        logger.info(f"Procesando archivo individual: {args.input}")
         try:
             excel, plot, json_file, csv_file = run_tool_enhanced(
                 file_path=args.input,
-                out_dir=args.out,
+                out_dir=out_dir,
                 **kwargs
             )
-            print('\n✓ COMPLETE')
+            logger.info('✓ ANÁLISIS COMPLETADO')
+            logger.info(f'  Excel:  {excel}')
+            logger.info(f'  Plot:   {plot}')
+            logger.info(f'  JSON:   {json_file}')
+            if csv_file:
+                logger.info(f'  CSV:    {csv_file}')
+            
+            # Mostrar en consola también
+            print('\n✓ ANALYSIS COMPLETE')
             print(f'  Excel:  {excel}')
             print(f'  Plot:   {plot}')
             print(f'  JSON:   {json_file}')
             if csv_file:
                 print(f'  CSV:    {csv_file}')
         except Exception as e:
+            logger.error(f'ERROR: {e}', exc_info=True)
             print(f'\n✗ ERROR: {e}')
     else:
-        print(f"\nBatch: {args.batch} → {args.out}")
+        logger.info(f"Iniciando batch processing: {args.batch} → {out_dir}")
         results = process_batch(
             batch_dir=args.batch,
-            out_dir=args.out,
+            out_dir=out_dir,
             overwrite=args.overwrite,
             **kwargs
         )
-        print(f'\n✓ COMPLETE')
-        print(f'  Total: {len(results)}')
         success = sum(1 for _, (e, _, _, _) in results if e is not None)
-        print(f'  Success: {success}, Failed: {len(results) - success}')
+        failed = len(results) - success
+        
+        logger.info(f'✓ BATCH COMPLETADO')
+        logger.info(f'  Total: {len(results)}, Éxito: {success}, Fallos: {failed}')
+        
+        # Mostrar en consola también
+        print(f'\n✓ BATCH COMPLETE')
+        print(f'  Total: {len(results)}')
+        print(f'  Success: {success}, Failed: {failed}')
 
 
 if __name__ == '__main__':

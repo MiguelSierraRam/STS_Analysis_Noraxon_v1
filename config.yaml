@@ -1,0 +1,26 @@
+csv_export: false
+disp_col: null
+half_window_derivative: 3
+json_export: true
+log_directory: data/logs
+logging:
+  backup_count: 5
+  console_output: true
+  file_size_mb: 10
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+make_plot: true
+mass_kg: null
+n_positive: 30
+ok_th: 0.85
+output_directory: data/output
+overwrite: false
+per_rep_plots: true
+plot_dpi: 150
+sheet_name: Reducido
+skip_uptodate: true
+strict_mode: false
+time_col: time
+validate_input: true
+vel_th_m_s: 0.1
+window: 30
