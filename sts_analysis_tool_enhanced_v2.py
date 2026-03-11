@@ -164,7 +164,7 @@ def run_tool_enhanced(
     reps: List[RepResult] = []
     for rep_num, (s, p, e) in enumerate(reps_data, start=1):
         next_s = idx_starts[rep_num] if rep_num < len(idx_starts) else n - 1
-        rep = compute_metrics(s, p, e, next_s, n, z_mm, vel_m_s, acc_m_s2, power_W, t, dt)
+        rep = compute_metrics(rep_num, s, p, e, next_s, n, z_mm, vel_m_s, acc_m_s2, power_W, t, dt)
         reps.append(rep)
     
     mark_ok_repetitions(reps, ok_th)
