@@ -43,10 +43,14 @@ from src.detection import (
     detect_ecc_ends,
     pair_repetitions,
     compute_phase_events,
+    compute_acc_phases,
+    RepEvents,
 )
 from src.metrics import RepResult, compute_metrics, mark_ok_repetitions
 from src.plotting import generate_plots
 from src.export import create_sheet1_variables, export_to_excel, export_to_json
+from src.analysis import generate_phase_dataframe
+
 
 
 # ============================================================================
@@ -67,6 +71,7 @@ def run_tool(
     out_prefix: Optional[str] = None,
     make_plot: bool = True,
     per_rep_plots: bool = True,
+    close_last_seated_at_end: bool = True,
 ) -> Tuple[str, Optional[str], str]:
     """
     Ejecuta el análisis STS completo.
@@ -156,31 +161,64 @@ def run_tool(
     )
     
     # --------
-    # 4. EMPAREJAR REPETICIONES
+    # 4. EMPAREJAR REPETICIONES + MARCADORES ACC
     # --------
     idx_starts = list(np.where(conc_start == 10000)[0])
     idx_peaks = list(np.where(conc_exc == 10000)[0])
     idx_ends = list(np.where(ecc_end == 10000)[0])
-    
-    reps_data, phase_id, phase_label = pair_repetitions(idx_starts, idx_peaks, idx_ends, n)
-    
+
+    # obtener acc marker y lista de eventos
+    acc, marker_to_time, rep_events = compute_acc_phases(conc_start, conc_exc, ecc_end, t)
+
+    # fases numéricas y etiquetas (utilizadas en hoja1)
+    phase_id = np.full(n, np.nan)
+    phase_label = np.array([''] * n, dtype=object)
+    if idx_starts:
+        phase_id[:idx_starts[0]] = 0
+        phase_label[:idx_starts[0]] = 'Sentado'
+
     # --------
-    # 5. CALCULAR MÉTRICAS POR REPETICIÓN
+    # 5. CALCULAR MÉTRICAS POR REPETICIÓN (básicas)
     # --------
     reps: List[RepResult] = []
-    for rep_num, (s, p, e) in enumerate(reps_data, start=1):
+    for ev in rep_events:
+        s = ev.start_idx
+        p = ev.peak_idx
+        e = ev.ecc_end_idx
+        rep_num = ev.rep
         next_s = idx_starts[rep_num] if rep_num < len(idx_starts) else n - 1
-        rep = compute_metrics(
-            rep_num, s, p, e, next_s, n,
-            z_mm, vel_m_s, acc_m_s2, power_W,
-            t, dt
-        )
+
+        # asignar fases por muestra tal como antes
+        if p is not None and p >= s:
+            phase_id[s:p] = 1
+            phase_label[s:p] = 'Levantarse'
+        if p is not None and e is not None and e >= p:
+            phase_id[p:e + 1] = 2
+            phase_label[p:e + 1] = 'Sentarse'
+        if e is not None and next_s > e:
+            phase_id[e + 1:next_s] = 0
+            phase_label[e + 1:next_s] = 'Sentado'
+        elif e is not None and rep_num == len(idx_starts):
+            phase_id[e + 1:] = 0
+            phase_label[e + 1:] = 'Sentado'
+
+        rep = compute_metrics(rep_num, s, p, e, next_s, n,
+                               z_mm, vel_m_s, acc_m_s2, power_W,
+                               t, dt)
         reps.append(rep)
-    
     mark_ok_repetitions(reps, ok_th)
-    
-    # Crear DataFrame de resultados
-    reps_df = pd.DataFrame([r.__dict__ for r in reps])
+
+    # --------
+    # 5b. GENERAR HOJA3 EXTENDIDA CON TODAS LAS MÉTRICAS
+    # --------
+    hoja3 = generate_phase_dataframe(
+        df, time_col, rep_events, marker_to_time,
+        z_mm, vel_m_s, acc_m_s2, power_W,
+        mass_kg, dt, half_window_derivative,
+        close_last_seated_at_end=close_last_seated_at_end,
+    )
+    # usar esta hoja3 como resultados finales
+    reps_df = hoja3
     
     # --------
     # 6. CREAR DATAFRAME COMPLETO (HOJA 1)
@@ -237,6 +275,7 @@ def run_tool(
         'n_peaks': len(idx_peaks),
         'n_ecc_end': len(idx_ends),
         'n_reps': len(reps),
+        'close_last_seated': close_last_seated_at_end,
     }
     
     # Excel
@@ -262,6 +301,7 @@ def main():
     parser.add_argument('--vel-th', type=float, default=0.1, help='Umbral fijo de velocidad en m/s (por defecto: 0.1)')
     parser.add_argument('--ok-th', type=float, default=0.85, help='Umbral relativo de amplitud para marcar OK (por defecto: 0.85)')
     parser.add_argument('--half-window-derivative', type=int, default=3, help='Semiventana de la pendiente centrada para derivadas (3 => 7 puntos)')
+    parser.add_argument('--close-last-seated', action='store_true', help='Cerrar la última fase "Sentado" al final del registro (para hoja3)')
     parser.add_argument('--no-plot', action='store_true', help='No generar gráfico general')
     parser.add_argument('--no-per-rep', action='store_true', help='No generar gráficos por repetición')
     parser.add_argument('--out-prefix', default=None, help='Prefijo de salida (sin extensión)')
@@ -281,6 +321,7 @@ def main():
         out_prefix=args.out_prefix,
         make_plot=(not args.no_plot),
         per_rep_plots=(not args.no_per_rep),
+        close_last_seated_at_end=args.close_last_seated,
     )
     print('\nLISTO')
     print('Excel:', excel)

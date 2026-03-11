@@ -2,8 +2,18 @@
 Detección de eventos (starts, peaks, ends) y lógica de fases.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 import numpy as np
+from dataclasses import dataclass
+
+
+@dataclass
+class RepEvents:
+    """Estructura simple para indices de inicio, pico y fin de cada repetición."""
+    rep: int
+    start_idx: int
+    peak_idx: Optional[int]
+    ecc_end_idx: Optional[int]
 
 
 def compute_vector_displacements(z_mm: np.ndarray) -> np.ndarray:
@@ -240,3 +250,65 @@ def compute_phase_events(
     any_phase_event = np.where((conc_start == 10000) | (conc_exc == 10000) | (ecc_end == 10000), 1, np.nan)
     
     return conc_event, conc_graph, ecc_event, ecc_graph, any_phase_event
+
+
+def compute_acc_phases(
+    start: np.ndarray,
+    peak: np.ndarray,
+    end: np.ndarray,
+    t: np.ndarray
+) -> Tuple[np.ndarray, Dict[int, float], List[RepEvents]]:
+    """
+    Calcula marcador acumulado "Acc Phases" y lista de eventos por repetición.
+
+    Args:
+        start: array de starts (10000 marca start).
+        peak: array de picos (10000 marca peak).
+        end: array de ends (10000 marca end).
+        t: vector de tiempos (s).
+
+    Returns:
+        acc: array con valor incremental por cada cambio de fase.
+        marker_to_time: diccionario muestrario->tiempo.
+        rep_events: lista de RepEvents con índices s,p,e.
+    """
+    n = len(start)
+    acc = np.zeros(n, dtype=int)
+    curr = 0
+    s_idx = list(np.where(start == 10000)[0])
+    p_idx = list(np.where(peak == 10000)[0])
+    e_idx = list(np.where(end == 10000)[0])
+    pi = 0
+    ei = 0
+    rep_events: List[RepEvents] = []
+    for r, s in enumerate(s_idx, start=1):
+        while pi < len(p_idx) and p_idx[pi] <= s:
+            pi += 1
+        p = p_idx[pi] if pi < len(p_idx) else None
+        if p is not None:
+            pi += 1
+        e = None
+        if p is not None:
+            while ei < len(e_idx) and e_idx[ei] <= p:
+                ei += 1
+            if ei < len(e_idx):
+                e = e_idx[ei]
+                ei += 1
+        rep_events.append(RepEvents(r, s, p, e))
+        curr += 1; acc[s] = curr
+        if p is not None:
+            curr += 1; acc[p] = curr
+        if e is not None:
+            curr += 1; acc[e] = curr
+    # fill gaps
+    for i in range(1, n):
+        if acc[i] == 0:
+            acc[i] = acc[i - 1]
+    # marker times
+    marker_to_time: Dict[int, float] = {}
+    if acc.max() > 0:
+        for m in range(1, int(np.max(acc)) + 1):
+            idxs = np.where(acc == m)[0]
+            if idxs.size:
+                marker_to_time[m] = float(t[int(idxs[0])])
+    return acc, marker_to_time, rep_events

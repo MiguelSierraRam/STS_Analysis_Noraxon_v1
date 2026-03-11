@@ -186,3 +186,31 @@ def export_to_json(params: dict, out_json: str) -> None:
     """
     with open(out_json, 'w', encoding='utf-8') as f:
         json.dump(params, f, ensure_ascii=False, indent=2)
+
+
+def export_advanced_sheet3(
+    wb: Workbook,
+    hoja3_df: pd.DataFrame
+) -> None:
+    """
+    Exporta Hoja3 ampliada (Kinematic & Forces) con métricas avanzadas.
+    
+    Args:
+        wb: Workbook de openpyxl.
+        hoja3_df: DataFrame con datos de Hoja3 ampliada.
+    """
+    ws3 = wb.create_sheet('Hoja3_Kinematic_&_Forces_like')
+    if not hoja3_df.empty:
+        for j, col in enumerate(hoja3_df.columns, start=1):
+            ws3.cell(row=1, column=j, value=col).font = Font(bold=True)
+        for i, (_, row) in enumerate(hoja3_df.iterrows(), start=2):
+            for j, val in enumerate(row, start=1):
+                if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+                    val = None
+                ws3.cell(row=i, column=j, value=val)
+        for j in range(1, len(hoja3_df.columns) + 1):
+            ws3.column_dimensions[get_column_letter(j)].width = min(
+                max(len(str(hoja3_df.columns[j - 1])) + 2, 14), 34
+            )
+    else:
+        ws3['A1'] = 'Sin repetición detectada'
