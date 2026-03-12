@@ -2,7 +2,7 @@
 Utilidades matemáticas y búsqueda de columnas.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Any
 import numpy as np
 import pandas as pd
 
@@ -20,8 +20,8 @@ def centered_slope(y: np.ndarray, dt: float, half_window: int = 3) -> np.ndarray
         Vector de derivadas.
     """
     y = np.asarray(y, dtype=float)
-    dy = np.full_like(y, np.nan)
-    w = half_window
+    dy: np.ndarray[tuple[Any, ...], np.dtype[np.Any]] = np.full_like(y, np.nan)
+    w: int = half_window
     for i in range(w, len(y) - w):
         dy[i] = (y[i + w] - y[i - w]) / (2 * w * dt)
     return dy
@@ -39,7 +39,7 @@ def cumulative_trapezoid(y: np.ndarray, dx: float) -> np.ndarray:
         Vector de integrales acumuladas.
     """
     y = np.asarray(y, dtype=float)
-    out = np.full_like(y, np.nan)
+    out: np.ndarray[tuple[Any, ...], np.dtype[np.Any]] = np.full_like(y, np.nan)
     if len(y) == 0:
         return out
     out[0] = 0.0
@@ -78,7 +78,7 @@ def detect_column(
     
     # Si no, por contenido
     for col in df.columns:
-        cl = str(col).lower()
+        cl: str = str(col).lower()
         if all(k.lower() in cl for k in contains_all):
             return col
     

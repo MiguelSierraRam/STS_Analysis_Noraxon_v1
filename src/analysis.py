@@ -1,7 +1,7 @@
 """
 Funciones de análisis avanzadas: cálculo de métricas por fase, HIP Z, EMG y CoP.
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import numpy as np
 import pandas as pd
 from .utils import centered_slope
