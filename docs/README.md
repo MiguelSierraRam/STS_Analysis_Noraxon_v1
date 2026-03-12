@@ -132,6 +132,14 @@ pip install -r requirements.txt  # incluye pytest
 python -m pytest
 ```
 
+Para generar reporte de cobertura localmente:
+
+```bash
+pip install pytest-cov
+python -m pytest --cov=src --cov-report=term-missing --cov-report=html
+# abrir htmlcov/index.html en el navegador
+```
+
 Las pruebas cubren:
 - Configuración y overrides
 - Logging (archivo y rotación)
