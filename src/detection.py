@@ -9,7 +9,14 @@ from dataclasses import dataclass
 
 @dataclass
 class RepEvents:
-    """Estructura simple para indices de inicio, pico y fin de cada repetición."""
+    """Eventos de una repetición individual de STS.
+    
+    Attributes:
+        rep: Número de repetición.
+        start_idx: Índice de inicio de fase concéntrica.
+        peak_idx: Índice de pico (transición Conc-Exc), puede ser None.
+        ecc_end_idx: Índice de fin de fase excéntrica, puede ser None.
+    """
     rep: int
     start_idx: int
     peak_idx: Optional[int]
@@ -27,9 +34,9 @@ def compute_vector_displacements(z_mm: np.ndarray) -> np.ndarray:
     Returns:
         Vector de signos: 1 (arriba), -1 (abajo), 0 (sin cambio).
     """
-    n = len(z_mm)
-    vector_disp = np.zeros(n, dtype=float)
-    dz = np.diff(z_mm, prepend=z_mm[0])
+    n: int = len(z_mm)
+    vector_disp: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.zeros(n, dtype=float)
+    dz: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.diff(z_mm, prepend=z_mm[0])
     vector_disp[dz > 0] = 1
     vector_disp[dz < 0] = -1
     vector_disp[0] = 0
@@ -50,9 +57,9 @@ def compute_windows(
     Returns:
         (future_sum, previous_sum) arrays.
     """
-    n = len(vector_disp)
-    future_sum = np.full(n, np.nan)
-    previous_sum = np.full(n, np.nan)
+    n: int = len(vector_disp)
+    future_sum: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.full(n, np.nan)
+    previous_sum: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.full(n, np.nan)
     
     for i in range(n):
         if i + window <= n:
@@ -80,16 +87,16 @@ def detect_conc_starts(
     Returns:
         Array con 10000 en índices de starts.
     """
-    n = len(future_sum)
-    conc_start = np.zeros(n, dtype=int)
+    n: int = len(future_sum)
+    conc_start: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.zeros(n, dtype=int)
     
     for i in range(n):
         if np.isnan(future_sum[i]):
             continue
-        cond = future_sum[i] >= n_positive and not np.isnan(vel_conc_flag[i])
+        cond: np.Any | bool = future_sum[i] >= n_positive and not np.isnan(vel_conc_flag[i])
         prev_cond = False
         if i > 0 and (not np.isnan(future_sum[i - 1])):
-            prev_cond = (future_sum[i - 1] >= n_positive) and (not np.isnan(vel_conc_flag[i - 1]))
+            prev_cond: np.Any | bool = (future_sum[i - 1] >= n_positive) and (not np.isnan(vel_conc_flag[i - 1]))
         if cond and (not prev_cond):
             conc_start[i] = 10000
     
@@ -107,8 +114,8 @@ def detect_peaks(z_mm: np.ndarray, window: int) -> np.ndarray:
     Returns:
         Array con 10000 en índices de picos.
     """
-    n = len(z_mm)
-    conc_exc = np.zeros(n, dtype=int)
+    n: int = len(z_mm)
+    conc_exc: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.zeros(n, dtype=int)
     
     for i in range(n):
         if i - window < 0 or i + window >= n:
@@ -138,16 +145,16 @@ def detect_ecc_ends(
     Returns:
         Array con 10000 en índices de ends.
     """
-    n = len(previous_sum)
-    ecc_end = np.zeros(n, dtype=int)
+    n: int = len(previous_sum)
+    ecc_end: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.zeros(n, dtype=int)
     
     for i in range(n):
         if np.isnan(previous_sum[i]):
             continue
-        cond = (previous_sum[i] <= -n_positive) and (not np.isnan(vel_ecc_flag[i]))
+        cond: np.Any | bool = (previous_sum[i] <= -n_positive) and (not np.isnan(vel_ecc_flag[i]))
         next_cond = False
         if i + 1 < n and (not np.isnan(previous_sum[i + 1])):
-            next_cond = (previous_sum[i + 1] <= -n_positive) and (not np.isnan(vel_ecc_flag[i + 1]))
+            next_cond: np.Any | bool = (previous_sum[i + 1] <= -n_positive) and (not np.isnan(vel_ecc_flag[i + 1]))
         if cond and (not next_cond):
             ecc_end[i] = 10000
     
@@ -176,8 +183,8 @@ def pair_repetitions(
         - phase_id: array numérico de fases.
         - phase_label: array de etiquetas de fase.
     """
-    phase_id = np.full(n, np.nan)
-    phase_label = np.array([''] * n, dtype=object)
+    phase_id: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.full(n, np.nan)
+    phase_label: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.array([''] * n, dtype=object)
     
     # Sentado antes del primer start
     if idx_starts:
@@ -192,7 +199,7 @@ def pair_repetitions(
         # Buscar primer pico posterior al start
         while peak_cursor < len(idx_peaks) and idx_peaks[peak_cursor] <= s:
             peak_cursor += 1
-        p = idx_peaks[peak_cursor] if peak_cursor < len(idx_peaks) else None
+        p: int | None = idx_peaks[peak_cursor] if peak_cursor < len(idx_peaks) else None
         if p is not None:
             peak_cursor += 1
         
@@ -202,11 +209,11 @@ def pair_repetitions(
             while end_cursor < len(idx_ends) and idx_ends[end_cursor] <= p:
                 end_cursor += 1
             if end_cursor < len(idx_ends):
-                e = idx_ends[end_cursor]
+                e: int = idx_ends[end_cursor]
                 end_cursor += 1
         
         # Siguiente start para fase sentado posterior
-        next_s = idx_starts[rep_num] if rep_num < len(idx_starts) else n - 1
+        next_s: int = idx_starts[rep_num] if rep_num < len(idx_starts) else n - 1
         
         # Asignar fases por muestra
         if p is not None and p >= s:
@@ -243,11 +250,11 @@ def compute_phase_events(
     Returns:
         (conc_event, conc_graph, ecc_event, ecc_graph, any_phase_event)
     """
-    conc_event = np.where((conc_start == 10000) | (conc_exc == 10000), 1, np.nan)
-    ecc_event = np.where((conc_exc == 10000) | (ecc_end == 10000), 1, np.nan)
-    conc_graph = np.nancumsum(np.where(np.isnan(conc_event), 0, 1))
-    ecc_graph = np.nancumsum(np.where(np.isnan(ecc_event), 0, 1))
-    any_phase_event = np.where((conc_start == 10000) | (conc_exc == 10000) | (ecc_end == 10000), 1, np.nan)
+    conc_event: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.where((conc_start == 10000) | (conc_exc == 10000), 1, np.nan)
+    ecc_event: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.where((conc_exc == 10000) | (ecc_end == 10000), 1, np.nan)
+    conc_graph: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.nancumsum(np.where(np.isnan(conc_event), 0, 1))
+    ecc_graph: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.nancumsum(np.where(np.isnan(ecc_event), 0, 1))
+    any_phase_event: np.ndarray[Tuple[np.Any, ...], np.dtype[np.Any]] = np.where((conc_start == 10000) | (conc_exc == 10000) | (ecc_end == 10000), 1, np.nan)
     
     return conc_event, conc_graph, ecc_event, ecc_graph, any_phase_event
 
@@ -272,19 +279,19 @@ def compute_acc_phases(
         marker_to_time: diccionario muestrario->tiempo.
         rep_events: lista de RepEvents con índices s,p,e.
     """
-    n = len(start)
-    acc = np.zeros(n, dtype=int)
+    n: int = len(start)
+    acc: np.ndarray[Tuple[int], np.dtype[np.Any]] = np.zeros(n, dtype=int)
     curr = 0
-    s_idx = list(np.where(start == 10000)[0])
-    p_idx = list(np.where(peak == 10000)[0])
-    e_idx = list(np.where(end == 10000)[0])
+    s_idx: List[np.Any] = list(np.where(start == 10000)[0])
+    p_idx: List[np.Any] = list(np.where(peak == 10000)[0])
+    e_idx: List[np.Any] = list(np.where(end == 10000)[0])
     pi = 0
     ei = 0
     rep_events: List[RepEvents] = []
     for r, s in enumerate(s_idx, start=1):
         while pi < len(p_idx) and p_idx[pi] <= s:
             pi += 1
-        p = p_idx[pi] if pi < len(p_idx) else None
+        p: np.Any | None = p_idx[pi] if pi < len(p_idx) else None
         if p is not None:
             pi += 1
         e = None
