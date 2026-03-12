@@ -123,6 +123,23 @@ excel, plot, json = run_tool_enhanced(
 # - Hoja3: Métricas por fase (Hip Z, EMG, CoP SD)
 ```
 
+## Testing 🧪
+
+Ejecuta la suite de pytest para validar funcionalidades básicas e infra:
+
+```bash
+pip install -r requirements.txt  # incluye pytest
+python -m pytest
+```
+
+Las pruebas cubren:
+- Configuración y overrides
+- Logging (archivo y rotación)
+- Funciones utilitarias (slope, trapecio, detección de columnas)
+- Detección de eventos básicos
+- Cálculo de métricas por repetición
+
+
 ## Interfaz de Línea de Comandos
 
 ### Versión Básica
