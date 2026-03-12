@@ -1,6 +1,4 @@
-import os
-import pytest
-from src.config import load_config, get_config, Config
+from src.config import load_config, Config
 
 
 def test_load_default_config():

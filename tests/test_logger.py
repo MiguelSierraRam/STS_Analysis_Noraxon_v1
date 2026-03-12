@@ -1,6 +1,4 @@
-import os
 import logging
-import pytest
 from src.logger import LoggerManager, get_logger
 from src.config import get_config
 

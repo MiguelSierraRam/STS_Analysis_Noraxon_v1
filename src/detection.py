@@ -302,11 +302,14 @@ def compute_acc_phases(
                 e = e_idx[ei]
                 ei += 1
         rep_events.append(RepEvents(r, s, p, e))
-        curr += 1; acc[s] = curr
+        curr += 1
+        acc[s] = curr
         if p is not None:
-            curr += 1; acc[p] = curr
+            curr += 1
+            acc[p] = curr
         if e is not None:
-            curr += 1; acc[e] = curr
+            curr += 1
+            acc[e] = curr
     # fill gaps
     for i in range(1, n):
         if acc[i] == 0:

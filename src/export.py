@@ -4,14 +4,13 @@ Exportación a Excel y JSON.
 
 import os
 import json
-from typing import List, Optional
+from typing import Optional
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-from src.metrics import RepResult
 
 
 def create_sheet1_variables(

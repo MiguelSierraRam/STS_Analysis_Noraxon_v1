@@ -2,7 +2,7 @@
 Generación de gráficos: general y por repetición.
 """
 
-from typing import List, Optional
+from typing import List
 import os
 import numpy as np
 import matplotlib.pyplot as plt

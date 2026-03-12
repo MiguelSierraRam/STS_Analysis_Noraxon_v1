@@ -6,7 +6,7 @@ Incluye soporte para:
 - CoP SD (estabilidad de Centro de Presión)
 """
 
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 

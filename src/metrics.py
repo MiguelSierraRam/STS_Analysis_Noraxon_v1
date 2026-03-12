@@ -3,7 +3,7 @@ Estructura de datos y cálculo de métricas por repetición.
 """
 
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List
 import numpy as np
 
 
