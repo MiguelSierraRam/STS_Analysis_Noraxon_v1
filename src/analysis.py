@@ -8,7 +8,18 @@ from .utils import centered_slope
 
 
 def trapz_manual(y: np.ndarray, dx: float) -> float:
-    """Integración por trapecios sin depender de NumPy >=2."""
+    """Integración trapezoidal manual sin depender de NumPy >=2.
+    
+    Calcula la integral numérica usando la regla trapezoidal, ignorando
+    valores NaN. Útil para numpy 2.x sin scipy disponible.
+    
+    Args:
+        y: Vector de valores a integrar.
+        dx: Intervalo de integración (paso).
+        
+    Returns:
+        Valor de la integral numérica. Retorna 0.0 si hay menos de 2 puntos.
+    """
     y = np.asarray(y, dtype=float)
     if y.size < 2:
         return 0.0
@@ -22,17 +33,45 @@ def trapz_manual(y: np.ndarray, dx: float) -> float:
 
 
 class PhaseComputer:
-    """Encapsula utilidades para extraer métricas de una fase temporal.
-
-    Los métodos trabajan sobre un DataFrame y un vector de tiempos.
+    """Computador de estadísticos genéricos para períodos temporales.
+    
+    Encapsula utilidades para extraer métricas estadísticas de un DataFrame
+    con series de tiempo. Soporta cálculos de media, máximos, mínimos, rangos,
+    desviaciones estándar y potencia/trabajo sobre períodos arbitrarios.
+    
+    Attributes:
+        df: DataFrame con todas las columnas de datos.
+        time: Vector de tiempos en segundos (1D).
+        cols: Índice de nombres de columnas del DataFrame.
+        dt: Intervalo temporal medio entre muestras (s).
     """
     def __init__(self, df: pd.DataFrame, time_col: str) -> None:
-        self.df: pd.DataFrame = df
+        """Inicializa el computador de fases.
+        
+        Args:
+            df: DataFrame con todas las columnas de datos.
+            time_col: Nombre de la columna que contiene tiempos en segundos.
+            
+        Raises:
+            KeyError: Si time_col no existe en df.
+        """
         self.time: np.ndarray[tuple[int], np.dtype[np.floating[np.Any]]] = df[time_col].astype(float).to_numpy()
         self.cols: pd.Index[str] = df.columns
         self.dt = float(pd.Series(np.diff(self.time)).median())
 
     def _slice(self, t0: float, t1: float) -> slice:
+        """Convierte tiempos a índices de slice para vectores.
+        
+        Busca los índices más cercanos a t0 y t1 en el vector de tiempos
+        y retorna un slice. Si t0 > t1, los intercambia automáticamente.
+        
+        Args:
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Slice para indexar arrays de datos temporales.
+        """
         i0 = int(np.argmin(np.abs(self.time - t0)))
         i1 = int(np.argmin(np.abs(self.time - t1)))
         if i1 < i0:
@@ -40,7 +79,21 @@ class PhaseComputer:
         return slice(i0, i1 + 1)
 
     def range_mm_to_m(self, col: str, t0: float, t1: float) -> tuple[None, None, None] | tuple[float, float, float]:
-        if col not in self.cols:
+        """Calcula rango de desplazamiento en columna, convierte mm → m.
+        
+        Busca máximo, mínimo y rango dentro del período temporal [t0, t1]
+        en una columna especificada (asumiendo unidades en mm) y retorna
+        en metros.
+        
+        Args:
+            col: Nombre de columna de desplazamiento (mm).
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Tupla (máximo_m, mínimo_m, rango_m) o (None, None, None) si
+            la columna no existe o no hay datos válidos.
+        """
             return (None, None, None)
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -51,7 +104,21 @@ class PhaseComputer:
         return (mx, mn, mx - mn)
 
     def stats(self, col: Optional[str], arr_fallback: Optional[np.ndarray], t0: float, t1: float) -> tuple[None, None, None] | tuple[float, float, float]:
-        sl: slice[Any, Any, Any] = self._slice(t0, t1)
+        """Calcula media, máximo y mínimo sobre un período temporal.
+        
+        Si `col` está especificado y existe en el DataFrame, usa esa columna.
+        Si no, usa el array `arr_fallback` si está proporcionado. Si ambos
+        faltan, retorna (None, None, None).
+        
+        Args:
+            col: Nombre de columna (opcional). Si None, usar arr_fallback.
+            arr_fallback: Array alternativo si col no existe (opcional).
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Tupla (media, máximo, mínimo) o (None, None, None) si no hay datos.
+        """
         if col and (col in self.cols):
             vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
         elif arr_fallback is not None:
@@ -63,7 +130,24 @@ class PhaseComputer:
         return (float(np.nanmean(vals)), float(np.nanmax(vals)), float(np.nanmin(vals)))
 
     def power_work(self, power_col: Optional[str], vel_col: Optional[str], mass_kg: Optional[float], t0: float, t1: float) -> tuple[None, None, None] | tuple[float, float, float]:
-        sl: slice[Any, Any, Any] = self._slice(t0, t1)
+        """Calcula potencia media/máxima y trabajo sobre un período.
+        
+        Prioridades:
+        1. Si power_col existe, usa esa columna.
+        2. Si power_col no existe pero mass_kg y vel_col existen, aproxima
+           potencia como P = mass_kg * g * vel_col.
+        3. Si no hay datos, retorna (None, None, None).
+           
+        Args:
+            power_col: Nombre de columna de potencia (W) - opcional.
+            vel_col: Nombre de columna de velocidad (m/s) - opcional.
+            mass_kg: Masa corporal en kg - requerida para aproximación.
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Tupla (potencia_media, potencia_máxima, trabajo_J) o (None, None, None).
+        """
         if power_col and (power_col in self.cols):
             p: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[power_col].iloc[sl], errors='coerce').to_numpy(dtype=float)
         elif mass_kg is not None and vel_col and (vel_col in self.cols):
@@ -80,7 +164,16 @@ class PhaseComputer:
         return (mean_p, max_p, work)
 
     def mean(self, col: str, t0: float, t1: float) -> None | float:
-        if col not in self.cols:
+        """Calcula media de una columna en un período temporal.
+        
+        Args:
+            col: Nombre de columna.
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Media o None si la columna no existe o no hay datos válidos.
+        """
             return None
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -89,7 +182,16 @@ class PhaseComputer:
         return float(np.nanmean(vals))
 
     def stdev(self, col: str, t0: float, t1: float) -> None | float:
-        if col not in self.cols:
+        """Calcula desviación estándar (STDEV.S, ddof=1) en un período.
+        
+        Args:
+            col: Nombre de columna.
+            t0: Tiempo inicial (s).
+            t1: Tiempo final (s).
+            
+        Returns:
+            Desviación estándar muestral o None si hay <2 puntos válidos.
+        """
             return None
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -114,7 +216,44 @@ def generate_phase_dataframe(
     close_last_seated_at_end: bool = True,
 ) -> pd.DataFrame:
     """
-    Construye el DataFrame de Hoja3 con todas las métricas (BCM, HIP, EMG, CoP).
+    Generate DataFrame of Hoja3 with computed phase-based metrics.
+    
+    Constructs a comprehensive phase-based metrics DataFrame combining kinematic,
+    kinetic, and electromyographic data across sit-to-stand repetitions. Computes
+    BCM (Body Center of Mass) metrics, hip joint metrics, EMG detection, and CoP
+    (Center of Pressure) metrics for each phase and repetition.
+    
+    Args:
+        df: Input DataFrame with time series data.
+        time_col: Name of time column in df.
+        rep_events: List of dictionaries with rep event markers (stand_idx, sit_idx, etc).
+        marker_to_time: Mapping from marker indices to float times.
+        z_mm: Body center of mass height in millimeters (shape: n_samples).
+        vel_m_s: Velocity in m/s (shape: n_samples).
+        acc_m_s2: Acceleration in m/s² (shape: n_samples).
+        power_W: Power in Watts (shape: n_samples).
+        mass_kg: Subject mass in kilograms. If None, power-derived metrics skipped.
+        dt: Sampling period in seconds.
+        half_window_derivative: Half-window size for centered slope calculation.
+        close_last_seated_at_end: If True, last seated phase extends to trial end.
+    
+    Returns:
+        DataFrame with columns:
+        - Phase metrics: phase, rep_idx, duration_s, distances
+        - BCM metrics: BCM_Z_range, BCM_Z_stats (mean, stdev, min, max)
+        - Hip metrics: hip_metrics computed from z_mm
+        - EMG metrics: emg_peak, emg_duration_ms via detection.find_emg_features
+        - CoP metrics: cop_metrics via detection.find_cop_features
+        - Work metrics: work_J if mass_kg provided, else NaN
+    
+    Raises:
+        KeyError: If required columns missing from rep_events dictionaries.
+        ValueError: If time array misaligned with DataFrame length.
+    
+    Notes:
+        - Uses trapz_manual for integration (NumPy 2.x compatible).
+        - Centered slope via centered_slope utility for smoother derivatives.
+        - Empty rep_events returns empty DataFrame with schema columns only.
     """
     pc = PhaseComputer(df, time_col)
 
