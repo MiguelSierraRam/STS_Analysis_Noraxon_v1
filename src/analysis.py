@@ -55,6 +55,7 @@ class PhaseComputer:
         Raises:
             KeyError: Si time_col no existe en df.
         """
+        self.df: pd.DataFrame = df
         self.time: np.ndarray[tuple[int], np.dtype[np.floating[np.Any]]] = df[time_col].astype(float).to_numpy()
         self.cols: pd.Index[str] = df.columns
         self.dt = float(pd.Series(np.diff(self.time)).median())
@@ -94,6 +95,7 @@ class PhaseComputer:
             Tupla (máximo_m, mínimo_m, rango_m) o (None, None, None) si
             la columna no existe o no hay datos válidos.
         """
+        if col not in self.cols:
             return (None, None, None)
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -119,6 +121,7 @@ class PhaseComputer:
         Returns:
             Tupla (media, máximo, mínimo) o (None, None, None) si no hay datos.
         """
+        sl: slice[Any, Any, Any] = self._slice(t0, t1)
         if col and (col in self.cols):
             vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
         elif arr_fallback is not None:
@@ -148,6 +151,7 @@ class PhaseComputer:
         Returns:
             Tupla (potencia_media, potencia_máxima, trabajo_J) o (None, None, None).
         """
+        sl: slice[Any, Any, Any] = self._slice(t0, t1)
         if power_col and (power_col in self.cols):
             p: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[power_col].iloc[sl], errors='coerce').to_numpy(dtype=float)
         elif mass_kg is not None and vel_col and (vel_col in self.cols):
@@ -174,6 +178,7 @@ class PhaseComputer:
         Returns:
             Media o None si la columna no existe o no hay datos válidos.
         """
+        if col not in self.cols:
             return None
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)
@@ -192,6 +197,7 @@ class PhaseComputer:
         Returns:
             Desviación estándar muestral o None si hay <2 puntos válidos.
         """
+        if col not in self.cols:
             return None
         sl: slice[Any, Any, Any] = self._slice(t0, t1)
         vals: np.ndarray[tuple[int], np.dtype[np.Any]] = pd.to_numeric(self.df[col].iloc[sl], errors='coerce').to_numpy(dtype=float)

@@ -9,6 +9,7 @@ Estructura:
 - export: exportación a Excel y JSON
 - advanced_metrics: PhaseComputer y métricas avanzadas (Hip_Z, EMG, CoP)
 - metadata: lectura de metadatos Noraxon
+- validation: validación de datos y calidad de entrada
 - config: manejo centralizado de configuración (config.yaml)
 - logger: logging profesional centralizado
 """
@@ -32,6 +33,17 @@ from src.plotting import generate_plots
 from src.export import create_sheet1_variables, export_to_excel, export_to_json, export_advanced_sheet3
 from src.advanced_metrics import PhaseComputer, detect_emg_columns, detect_cop_columns, trapz_manual
 from src.metadata import read_metadata
+from src.validation import (
+    validate_dataframe,
+    validate_required_columns,
+    validate_column_types,
+    validate_numeric_range,
+    validate_time_column,
+    validate_sts_data,
+    print_validation_report,
+    ValidationError,
+    ValidationWarning,
+)
 from src.config import Config, load_config, get_config
 from src.logger import get_logger, LoggerManager
 
@@ -68,7 +80,17 @@ __all__ = [
     'trapz_manual',
     # Metadata
     'read_metadata',
-    # Config & Logging (NEW)
+    # Validation
+    'validate_dataframe',
+    'validate_required_columns',
+    'validate_column_types',
+    'validate_numeric_range',
+    'validate_time_column',
+    'validate_sts_data',
+    'print_validation_report',
+    'ValidationError',
+    'ValidationWarning',
+    # Config & Logging
     'Config',
     'load_config',
     'get_config',
