@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 import pandas as pd
 
 
-def read_metadata(file_path: str, default_mass_kg: Optional[float] = None) -> Dict[str, Any]:
+def read_metadata(file_path: str, default_mass_kg: Optional[float] = None, participant_id: Optional[str] = None, participants_db: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
     """
     Lee metadatos de la hoja 'MetaData_&_Parameters' en un archivo Excel Noraxon.
     
@@ -60,5 +60,22 @@ def read_metadata(file_path: str, default_mass_kg: Optional[float] = None) -> Di
     
     except Exception:
         pass  # Si falla, usamos valores por defecto
+    
+    # Enriquecer con BD de participantes si disponible
+    if participant_id and participants_db is not None and not participants_db.empty:
+        row = participants_db[participants_db['participant_id'].astype(str).str.upper() == participant_id.upper()]
+        if not row.empty:
+            # Sobrescribir con datos de BD si existen
+            metadata['Codigo'] = participant_id  # Siempre usar participant_id como Codigo
+            if 'mass_kg' in row.columns and pd.notna(row['mass_kg'].iloc[0]):
+                metadata['Peso_kg'] = float(row['mass_kg'].iloc[0])
+            if 'height_cm' in row.columns and pd.notna(row['height_cm'].iloc[0]):
+                metadata['Altura'] = float(row['height_cm'].iloc[0])
+            if 'age_years' in row.columns and pd.notna(row['age_years'].iloc[0]):
+                metadata['Edad'] = float(row['age_years'].iloc[0])
+            # Agregar otros campos si existen
+            for col in participants_db.columns:
+                if col not in ['participant_id', 'mass_kg', 'height_cm', 'age_years'] and pd.notna(row[col].iloc[0]):
+                    metadata[col] = row[col].iloc[0]
     
     return metadata

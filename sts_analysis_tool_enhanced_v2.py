@@ -65,6 +65,81 @@ from openpyxl.utils import get_column_letter
 logger = get_logger(__name__)
 
 
+def load_participants_db(db_path: str = 'data/participants_db.xlsx') -> pd.DataFrame:
+    """Carga la base de datos de participantes desde Excel."""
+    if not os.path.exists(db_path):
+        logger.warning(f"BD de participantes no encontrada: {db_path}. Usando masa por defecto.")
+        return pd.DataFrame()
+    try:
+        df = pd.read_excel(db_path, engine='openpyxl')
+        logger.info(f"BD de participantes cargada: {len(df)} registros")
+        return df
+    except Exception as e:
+        logger.error(f"Error cargando BD de participantes: {e}")
+        return pd.DataFrame()
+
+
+def get_participant_mass(participant_id: str, db_df: pd.DataFrame) -> Optional[float]:
+    """Obtiene la masa del participante desde la BD."""
+    if db_df.empty:
+        return None
+    # Asumir columna 'participant_id' y 'mass_kg'
+    row = db_df[db_df['participant_id'].astype(str).str.upper() == participant_id.upper()]
+    if not row.empty:
+        return float(row['mass_kg'].iloc[0])
+    return None
+
+
+def export_processed_data(input_file: str, participant_id: str, mass_kg: float, out_dir: str, hoja3_df: pd.DataFrame = None):
+    """Exporta datos procesados a BD."""
+    db_path = os.path.join(out_dir, 'processed_data.csv')
+    
+    # Crear datos resumidos
+    summary = {
+        'participant_id': participant_id,
+        'input_file': os.path.basename(input_file),
+        'mass_kg': mass_kg,
+        'processed_at': pd.Timestamp.now().isoformat(),
+        'n_reps': len(hoja3_df['Repeticion'].unique()) if hoja3_df is not None else 0,
+    }
+    
+    # Agregar métricas promedio si hay datos
+    if hoja3_df is not None and not hoja3_df.empty:
+        # Promedios por fase
+        for phase in ['Concéntrica', 'Excéntrica', 'Sentado']:
+            phase_data = hoja3_df[hoja3_df['Fase'] == phase]
+            if not phase_data.empty:
+                # Calcular promedios de las columnas disponibles
+                if 'BCM_Z_Power_Mean (W)' in phase_data.columns and phase_data['BCM_Z_Power_Mean (W)'].notna().any():
+                    summary[f'{phase.lower()}_power_mean_avg'] = phase_data['BCM_Z_Power_Mean (W)'].mean()
+                if 'BCM_Z_Work (J)' in phase_data.columns and phase_data['BCM_Z_Work (J)'].notna().any():
+                    summary[f'{phase.lower()}_work_avg'] = phase_data['BCM_Z_Work (J)'].mean()
+                if 'BCM_Z_Vel_Max (m/s)' in phase_data.columns:
+                    summary[f'{phase.lower()}_vel_max_avg'] = phase_data['BCM_Z_Vel_Max (m/s)'].mean()
+                if 'BCM_Z_Range (m)' in phase_data.columns:
+                    summary[f'{phase.lower()}_range_avg'] = phase_data['BCM_Z_Range (m)'].mean()
+                if 'BCM_Z_Vel_Range (m/s)' in phase_data.columns:
+                    summary[f'{phase.lower()}_vel_range_avg'] = phase_data['BCM_Z_Vel_Range (m/s)'].mean()
+                if 'BCM_Z_Acc_Mean (m/s²)' in phase_data.columns:
+                    summary[f'{phase.lower()}_acc_mean_avg'] = phase_data['BCM_Z_Acc_Mean (m/s²)'].mean()
+                # EMG promedio de max por fase
+                emg_max_cols = [c for c in phase_data.columns if 'EMG' in c and 'Max' in c]
+                if emg_max_cols:
+                    summary[f'{phase.lower()}_emg_max_avg'] = phase_data[emg_max_cols].mean().mean()
+    
+    # Cargar BD existente o crear nueva
+    if os.path.exists(db_path):
+        existing_df = pd.read_csv(db_path)
+        new_df = pd.DataFrame([summary])
+        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+    else:
+        updated_df = pd.DataFrame([summary])
+    
+    # Guardar
+    updated_df.to_csv(db_path, index=False)
+    logger.info(f"BD procesada actualizada: {db_path}")
+
+
 def run_tool_enhanced(
     file_path: str,
     sheet_name: str = 'Reducido',
@@ -82,6 +157,8 @@ def run_tool_enhanced(
     make_plot: bool = True,
     per_rep_plots: bool = True,
     close_last_seated_at_end: bool = True,
+    participant_id: Optional[str] = None,
+    participants_db: Optional[pd.DataFrame] = None,
 ) -> Tuple[str, Optional[str], str, Optional[str]]:
     """Ejecuta análisis STS completo con funcionalidades avanzadas."""
     logger.info(f"Iniciando análisis: {file_path}")
@@ -194,8 +271,14 @@ def run_tool_enhanced(
     sheet1['Acc Phases'] = acc_phases
     
     # -------- 8. CREAR HOJA3 AMPLIADA --------
-    metadata = read_metadata(file_path, mass_kg)
+    metadata = read_metadata(file_path, mass_kg, participant_id, participants_db)
     pc = PhaseComputer(df, time_col)
+    
+    # Agregar columnas calculadas al df para PhaseComputer
+    df_temp = df.copy()
+    df_temp['BCM_Z_Vel (m/s)'] = vel_m_s
+    df_temp['BCM_Z_Power (W)'] = power_W
+    pc_temp = PhaseComputer(df_temp, time_col)
     
     emg_cols = detect_emg_columns(df)
     cop_cols = detect_cop_columns(df)
@@ -236,6 +319,7 @@ def run_tool_enhanced(
                 'Fase': phase_name,
                 'Inicio_Tiempo': t0,
                 'Final_Tiempo': t1,
+                'Duracion_Fase (s)': t1 - t0,  # Nueva: duración de la fase
             }
             
             # BCM Z
@@ -248,24 +332,76 @@ def run_tool_enhanced(
             row['BCM_Z_Vel_Mean (m/s)'] = mV
             row['BCM_Z_Vel_Max (m/s)'] = xV
             
-            mP, xP, work = pc.power_work(None, None, metadata['Peso_kg'], t0, t1)
-            row['BCM_Z_Power_Mean (W)'] = mP
-            row['BCM_Z_Work (J)'] = work
+            # BCM Z Power and Work with interpolation
+            if metadata['Peso_kg'] is not None:
+                # Interpolate velocity over the time period
+                t_interp = np.linspace(t0, t1, num=100)  # 100 points for interpolation
+                vel_interp = np.interp(t_interp, t, vel_m_s)
+                p_interp = metadata['Peso_kg'] * 9.80665 * vel_interp
+                work_calc = np.trapezoid(p_interp, t_interp)
+                mean_p_calc = np.mean(p_interp)
+                max_p_calc = np.max(p_interp)
+                
+                row['BCM_Z_Power_Mean (W)'] = mean_p_calc
+                row['BCM_Z_Power_Max (W)'] = max_p_calc  # Nueva variable: potencia máxima
+                row['BCM_Z_Work (J)'] = work_calc
+            else:
+                row['BCM_Z_Power_Mean (W)'] = None
+                row['BCM_Z_Power_Max (W)'] = None
+                row['BCM_Z_Work (J)'] = None
             
-            # Hip Z
+            # Calcular BCM_Z_Vel_Range (m/s): rango de velocidad
+            vel_slice = vel_m_s[(t >= t0) & (t <= t1)]
+            if len(vel_slice) > 0:
+                row['BCM_Z_Vel_Range (m/s)'] = np.ptp(vel_slice)  # peak-to-peak
+            else:
+                row['BCM_Z_Vel_Range (m/s)'] = None
+            
+            # Jerk (derivada de aceleración)
+            jerk_m_s3 = centered_slope(acc_m_s2, dt, half_window_derivative)
+            jerk_slice = jerk_m_s3[(t >= t0) & (t <= t1)]
+            if len(jerk_slice) > 0:
+                row['BCM_Z_Jerk_Mean (m/s³)'] = np.mean(jerk_slice)
+                row['BCM_Z_Jerk_Max (m/s³)'] = np.max(jerk_slice)
+            
+            # Ratios
+            if 'BCM_Z_Power_Mean (W)' in row and row['BCM_Z_Power_Mean (W)'] is not None and metadata['Peso_kg']:
+                row['Power_to_Weight_Ratio'] = row['BCM_Z_Power_Mean (W)'] / (metadata['Peso_kg'] * 9.80665)  # W/N
+            if 'BCM_Z_Vel_Max (m/s)' in row and row['BCM_Z_Vel_Max (m/s)'] is not None:
+                row['Vel_to_Height_Ratio'] = row['BCM_Z_Vel_Max (m/s)'] / metadata.get('Altura', 1.7)  # m/s / m
+            
+            # Hip Z adicionales
             if disp_hipz is not None:
                 hmx, hmn, hrg = pc.range_mm_to_m(disp_hipz, t0, t1)
                 row['HIP_Z_Max (m)'] = hmx
+                row['HIP_Z_Min (m)'] = hmn  # Nueva
                 row['HIP_Z_Range (m)'] = hrg
+                
+                # Velocidad de Hip Z (si hay columna de vel hip)
+                hip_vel_col = next((c for c in df.columns if 'hip' in str(c).lower() and 'vel' in str(c).lower()), None)
+                if hip_vel_col:
+                    hip_vel_mean, hip_vel_max, _ = pc.stats(hip_vel_col, None, t0, t1)
+                    row['HIP_Z_Vel_Mean (m/s)'] = hip_vel_mean  # Nueva
+                    row['HIP_Z_Vel_Max (m/s)'] = hip_vel_max  # Nueva
             
-            # EMG
+            # EMG variables adicionales (máximos y mínimos)
             for emg in emg_cols:
-                row[f'EMG_{emg}'] = pc.mean(emg, t0, t1)
+                emg_mean, emg_max, emg_min = pc.stats(emg, None, t0, t1)
+                row[f'EMG_{emg}'] = emg_mean  # Media (ya existente)
+                row[f'EMG_{emg}_Max (%)'] = emg_max  # Nueva: máximo
+                row[f'EMG_{emg}_Min (%)'] = emg_min  # Nueva: mínimo
             
-            # CoP
+            # CoP variables adicionales (máximos y mínimos)
             for key, col in cop_cols.items():
                 if col:
-                    row[f'CoP_{key}'] = pc.mean(col, t0, t1)
+                    cop_mean = pc.mean(col, t0, t1)
+                    row[f'CoP_{key}'] = cop_mean  # Ya existente
+                    
+                    # Nuevas: máximo y mínimo de CoP
+                    cop_max = pc.stats(col, None, t0, t1)[1]
+                    cop_min = pc.stats(col, None, t0, t1)[2]
+                    row[f'CoP_{key}_Max'] = cop_max
+                    row[f'CoP_{key}_Min'] = cop_min
             
             hoja3_rows.append(row)
     
@@ -350,6 +486,10 @@ def run_tool_enhanced(
         except Exception as e:
             logger.warning(f"No se pudo exportar CSV: {e}")
     
+    # Exportar a BD procesada si participant_id disponible
+    if participant_id:
+        export_processed_data(file_path, participant_id, mass_kg or 0, out_dir or os.path.dirname(out_prefix), hoja3_df)
+    
     logger.info(f"✓ Análisis completado correctamente")
     logger.debug(f"  Excel: {out_excel}")
     logger.debug(f"  Plot: {plot_path}")
@@ -380,6 +520,7 @@ def analyze_file(
 def process_batch(
     batch_dir: str,
     out_dir: str = 'data/output',
+    participants_db: pd.DataFrame = None,
     **kwargs
 ) -> List[Tuple[str, Tuple]]:
     """Procesa batch de archivos Excel."""
@@ -392,6 +533,15 @@ def process_batch(
         base = os.path.splitext(name)[0]
         out_prefix = os.path.join(out_dir, base + '_analysis_enhanced')
         out_xlsx = out_prefix + '.xlsx'
+        
+        # Extraer participant_id
+        parts = name.split('_')
+        participant_id = parts[1] if len(parts) > 1 else base
+        mass_kg = kwargs.get('mass_kg')
+        if mass_kg is None and participants_db is not None:
+            mass_kg = get_participant_mass(participant_id, participants_db)
+            if mass_kg is not None:
+                logger.info(f"Masa para {participant_id}: {mass_kg} kg")
         
         # Skip si existe y es más nuevo (a menos que overwrite=True)
         if not kwargs.get('overwrite', False) and os.path.exists(out_xlsx):
@@ -406,10 +556,13 @@ def process_batch(
         
         logger.info(f"Processing: {name}")
         try:
+            kwargs_copy = kwargs.copy()
+            kwargs_copy['mass_kg'] = mass_kg
             out = run_tool_enhanced(
                 file_path=in_path,
                 out_prefix=out_prefix,
-                **kwargs
+                participant_id=participant_id,
+                **kwargs_copy
             )
             results.append((name, out))
         except Exception as e:
@@ -473,6 +626,9 @@ Ejemplos:
     # Cargar config.yaml
     config = load_config(args.config)
     
+    # Cargar BD de participantes
+    participants_db = load_participants_db()
+    
     # Configurar logging
     LoggerManager.configure(log_dir=args.log_dir)
     logger.info(f"STS Analysis Tool Enhanced v2.1 iniciado")
@@ -529,11 +685,30 @@ Ejemplos:
     # ========== PROCESAMIENTO ==========
     if args.input:
         logger.info(f"Procesando archivo individual: {args.input}")
+        
+        # Extraer participant_id del nombre del archivo (ej. 2025-11-04-12-24_SMP011_D1_10STS_13REP_1.xlsx -> SMP011)
+        base_name = os.path.basename(args.input)
+        parts = base_name.split('_')
+        participant_id = parts[1] if len(parts) > 1 else parts[0].split('.')[0]
+        logger.info(f"Participant ID extraído: {participant_id}")
+        
+        # Usar masa de BD si no se especificó
+        if mass_kg is None:
+            mass_kg = get_participant_mass(participant_id, participants_db)
+            if mass_kg is not None:
+                logger.info(f"Masa obtenida de BD: {mass_kg} kg")
+            else:
+                logger.warning(f"No se encontró masa para {participant_id} en BD. Especifica --mass-kg")
+        
         try:
+            kwargs_copy = kwargs.copy()
+            kwargs_copy['mass_kg'] = mass_kg  # Sobrescribir con masa de BD si aplica
             excel, plot, json_file, csv_file = run_tool_enhanced(
                 file_path=args.input,
                 out_dir=out_dir,
-                **kwargs
+                participant_id=participant_id,
+                participants_db=participants_db,
+                **kwargs_copy
             )
             logger.info('✓ ANÁLISIS COMPLETADO')
             logger.info(f'  Excel:  {excel}')
@@ -558,6 +733,7 @@ Ejemplos:
             batch_dir=args.batch,
             out_dir=out_dir,
             overwrite=args.overwrite,
+            participants_db=participants_db,
             **kwargs
         )
         success = sum(1 for _, (e, _, _, _) in results if e is not None)
